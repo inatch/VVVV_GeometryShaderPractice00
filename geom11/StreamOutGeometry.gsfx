@@ -1,0 +1,98 @@
+
+cbuffer cbPerDraw : register( b0 )
+{
+	float4x4 tVP : LAYERVIEWPROJECTION;	
+};
+
+
+struct VS_IN
+{
+	float4 PosO : POSITION;
+	float4 TexCd : TEXCOORD0;
+};
+
+struct GS_IN{
+	float4 Pos : POSITION;	
+	float2 uv : TEXCOORD0;
+	float phase : TEXCOORD1;
+};
+
+struct GS_OUT
+{
+    float4 Pos: Position;
+    float4 norm : NORMAL;
+	float2 uv: TEXCOORD0;
+};
+
+
+float4x4 SetRotationMatrix(float3 angle){
+	float4x4 pitch = {  1, 0, 0, 0,
+						0, cos(angle.x), -sin(angle.x),0,
+						0, sin(angle.x), cos(angle.x), 0,
+						0,0,0,1};
+	float4x4 yaw = {    cos(angle.y), 0, sin(angle.y), 0,
+						0, 1, 0,0,
+						-sin(angle.y), 0, cos(angle.y), 0,
+						0,0,0,1};
+	float4x4 roll = {   cos(angle.z), -sin(angle.z), 0, 0,
+						sin(angle.z), cos(angle.z), 0,0,
+						0, 0, 1, 0,
+						0,0,0,1};
+	return mul(yaw,mul(roll, pitch));
+}
+
+float4x4 tW<string uiname="WorldTransform";>;
+StructuredBuffer<float3> sbAngle;
+float Y;
+
+GS_IN VS(VS_IN input)
+{
+    GS_IN output;
+    output.Pos  = mul(input.PosO,tW);//mul(input.PosO,mul(tW,tVP));
+    output.uv = input.TexCd.xy;
+	output.phase = max(output.Pos.y - Y, 0);
+	return output;
+}
+
+[maxvertexcount(3)]
+void GS( triangle GS_IN input[3], inout TriangleStream<GS_OUT> TriStream , uint pid : SV_PrimitiveID){
+	
+    float3 faceEdgeA = input[1].Pos.xyz - input[0].Pos.xyz;
+    float3 faceEdgeB = input[2].Pos.xyz - input[0].Pos.xyz;
+    float3 faceNormal = normalize( cross(faceEdgeA, faceEdgeB) );
+	
+	float4 vpos[3];
+	for( int v=0; v<3; v++ )
+    {
+        vpos[v] = mul(input[v].Pos,SetRotationMatrix(sbAngle[pid]*input[v].phase)) + float4(faceNormal*input[v].phase,0);
+    	vpos[v] = mul( vpos[v], tVP);
+        
+    }
+	
+	float3 edgeA = vpos[1].xyz - vpos[0].xyz;
+	float3 edgeB = vpos[2].xyz - vpos[0].xyz;
+	float3 n = normalize(cross(edgeA,edgeB));
+	
+	GS_OUT output;
+	
+	for(int j=0; j<3; j++){
+		output.Pos = vpos[j];
+        output.norm = float4(n,1);        
+        output.uv = input[j].uv;
+        TriStream.Append( output );
+	}
+	TriStream.RestartStrip();
+}
+
+GeometryShader StreamOutGS = ConstructGSWithSO( CompileShader( gs_4_0, GS() ), "POSITION.xyz;NORMAL.xyz;TEXCOORD.xy", NULL,NULL,NULL,-1 );
+
+technique10 PassMesh
+{
+    pass PP2
+    {
+        SetVertexShader( CompileShader( vs_4_0, VS() ) );
+        SetGeometryShader( StreamOutGS );
+    }  
+}
+
+
